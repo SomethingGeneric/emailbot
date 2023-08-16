@@ -3,11 +3,12 @@ import email
 import time
 import sys, os
 import signal
-import toml,json
+import toml
 import smtplib
-import openai
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+from responders import syst
 
 with open(
     "config.toml",
@@ -17,11 +18,12 @@ with open(
 if not os.path.exists("data"):
     os.makedirs("data")
 
+cogs = [
+    syst.SystemResponder()
+]
+
 sender_addr = config["from"]
 sender_passw = config["passw"]
-openai.api_key = config["openai"]
-
-from messages import start_messages
 
 # Connect to the IMAP server
 mail = imaplib.IMAP4_SSL(sender_addr.split("@")[1])
@@ -56,36 +58,21 @@ def get_email_details(message):
 
 # Define a function to generate a response using the local model
 def generate_response(fromaddr, subj, prompt):
+    for c in cogs:
+        if c.trigger_start:
+            if prompt.startswith(c.trigger):
+                try:
+                    return c.process(prompt)
+                except Exception as e:
+                    return "Error: '" + str(e) + "'."
+        else:
+            if c.trigger in prompt:
+                try:
+                    return c.process(prompt)
+                except Exception as e:
+                    return "Error: '" + str(e) + "'."
     
-    subj = subj.replace("Re: ", "")
-    if os.path.exists(f"data/{fromaddr}-{subj}.saved"):
-        p_messages_dict = json.loads(open(f"data/{fromaddr}-{subj}.saved").read())
-        p_messages = [p_messages_dict] if isinstance(p_messages_dict, dict) else p_messages_dict
-    else:
-        p_messages = start_messages.copy()
-
-    p_messages.append({"role": "user", "content": prompt})
-
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=p_messages,
-    )
-
-    #print(response)
-
-    newm = {
-        "role": "assistant",
-        "content": response["choices"][0]["message"]["content"],
-    }
-    p_messages.append(newm)
-
-    #print(p_messages)
-
-    with open(f"data/{fromaddr}-{subj}.saved", "w") as f:
-        f.write(json.dumps(p_messages))
-
-    return response["choices"][0]["message"]["content"]
-
+    return "I am smooth brain"
 
 # Define a function to handle SIGTERM signal
 def sigterm_handler(signal, frame):
@@ -117,7 +104,16 @@ if __name__ == "__main__":
 
                 from_email = sender_addr
                 to_email = sender
-                subject = "Re: {}".format(message["Subject"])
+
+                subject = ""
+
+                if message['Subject'] != "":
+                    print(f"Responding to {message['Subject']}")
+                    subject = "Re: {}".format(message["Subject"])
+                else:
+                    print("No subject on current message.")
+                
+                
                 body = response
 
                 msg = MIMEMultipart()
@@ -140,12 +136,12 @@ if __name__ == "__main__":
 
                 print("Response sent.")
 
-            # Wait for 10 seconds before checking for new emails again
-            time.sleep(10)
+            # Wait for 5 seconds before checking for new emails again
+            time.sleep(5)
 
         except KeyboardInterrupt:
             print("Keyboard interrupt received. Exiting...")
             sys.exit(0)
 
-        except Exception as e:
-            print("An error occurred:", e)
+        #except Exception as e:
+        #    print("An error occurred:", e)
